@@ -6,7 +6,7 @@ No account, no cloud, no third-party packages.
 ## Features
 
 - Weekly grid with 30-minute slots (07:00-24:00, Monday first).
-- Blocks with Title / Description / Results / Tags and a colour status.
+- Blocks with Title / Description / Results / Tags, a colour status and an optional colour.
 - Weekly recurring activities, editable per occurrence (move, change, cancel one date) or
   as a whole series.
 - A to-do panel whose items can be dragged onto the grid.
@@ -52,6 +52,12 @@ Setup on a new machine: see [`SETUP.md`](SETUP.md).
 - Recurring series store weekdays as JavaScript numbers (0 = Sunday ... 6 = Saturday) and
   per-occurrence changes in `exceptions`, keyed by the **original** date. Shortening
   `until` hides later exceptions without deleting them.
+- Activities and series have an optional `color`: a palette key (`grey`, `cyan`, `blue`,
+  `indigo`, `lilac`, `purple`, `magenta`), not a hex value; the colours are the `--c-<key>`
+  tokens in `static/style.css`. Missing or unknown means the default: `grey` for
+  activities (no colour: the block takes the status colour), `lilac` for series. The
+  default is saved as no field. A series colour applies to all its occurrences. Coloured
+  blocks keep their colour and show the status as a small square in the top-right corner.
 
 ## Platform notes
 

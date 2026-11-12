@@ -6,6 +6,11 @@
   const $ = (id) => document.getElementById(id);
   const WEEKDAYS = [[1, "Mon"], [2, "Tue"], [3, "Wed"], [4, "Thu"], [5, "Fri"], [6, "Sat"], [0, "Sun"]];
   const STATUSES = ["green", "yellow", "red"];
+  // Palette keys (stored in the data); the colours themselves are CSS tokens --c-<key>.
+  const COLORS = [["grey", "Grey"], ["cyan", "Cyan"], ["blue", "Blue"], ["indigo", "Indigo"],
+                  ["lilac", "Lilac"], ["purple", "Purple"], ["magenta", "Magenta"]];
+  const ACTIVITY_COLOR = "grey";   // default: no colour, the block takes the status colour
+  const SERIES_COLOR = "lilac";
 
   let data = { activities: [], series: [], todos: [] };
   let calendar = null;
@@ -30,6 +35,24 @@
     return toLocal(new Date(y, m - 1, d, hh, mm + minutes));
   }
   function statusClass(s) { return STATUSES.includes(s) ? "st-" + s : "st-none"; }
+  /* Missing or unknown colour -> the default. */
+  function colorKey(c, def) { return COLORS.some(([k]) => k === c) ? c : def; }
+  /* null = no colour (whole block takes the status); otherwise the palette key. */
+  function activityColor(a) {
+    const c = colorKey(a && a.color, ACTIVITY_COLOR);
+    return c === ACTIVITY_COLOR ? null : c;
+  }
+  function seriesColor(s) { return colorKey(s && s.color, SERIES_COLOR); }
+  /* The default colour is stored as no field at all. */
+  function setColorField(obj, c, def) {
+    if (c === def) delete obj.color; else obj.color = c;
+  }
+  function statusSquare(s) {
+    if (!STATUSES.includes(s)) return null;
+    const sq = el("span", "ev-sq sq-" + s);
+    sq.title = { green: "100%", yellow: "50-99%", red: "< 50%" }[s];
+    return sq;
+  }
   function fmtDay(dateStr) {
     const d = R.parseDate(dateStr);
     return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
@@ -152,14 +175,16 @@
       if (!(a.end > loB && a.start < hiB)) continue;
       events.push({
         id: a.id, title: a.title, start: a.start, end: a.end,
-        extendedProps: { kind: "activity", ref: a.id, description: a.description, status: a.status },
+        extendedProps: { kind: "activity", ref: a.id, description: a.description, status: a.status,
+                         color: activityColor(a) },
       });
     }
     for (const o of R.expandAll(data.series, lo, hi)) {
       events.push({
         id: o.id, title: o.title, start: o.start, end: o.end,
         extendedProps: { kind: "occurrence", seriesId: o.seriesId, date: o.date,
-                         description: o.description, status: o.status },
+                         description: o.description, status: o.status,
+                         color: seriesColor(findSeries(o.seriesId)) },
       });
     }
     return events;
@@ -167,7 +192,9 @@
 
   function renderEvent(arg) {
     const p = arg.event.extendedProps || {};
-    const box = el("div", "ev " + statusClass(p.status) + (p.kind === "occurrence" ? " recurring" : ""));
+    // no colour: the whole block takes the status; with a colour: status is a square
+    const box = el("div", "ev " + (p.color ? "colored col-" + p.color : statusClass(p.status)) +
+                          (p.kind === "occurrence" ? " recurring" : ""));
     const top = el("div", "ev-top");
     top.appendChild(el("span", "ev-title", arg.event.title || ""));
     if (p.kind === "occurrence") {
@@ -175,6 +202,8 @@
       icon.title = "Recurring";
       top.appendChild(icon);
     }
+    const sq = p.color ? statusSquare(p.status) : null;
+    if (sq) top.appendChild(sq);
     box.appendChild(top);
     if (arg.timeText) box.appendChild(el("div", "ev-time", arg.timeText));
     if (p.description) box.appendChild(el("div", "ev-desc", p.description));
@@ -348,6 +377,7 @@
   let ed = null;            // what the editor is editing
   let editorTags = null;
   let editorStatus = null;
+  let editorColor = ACTIVITY_COLOR;
 
   function timeOptions(select, includeEnd) {
     select.innerHTML = "";
@@ -405,6 +435,28 @@
     });
   }
 
+  function buildColorPicker() {
+    const box = $("f-color");
+    box.innerHTML = "";
+    for (const [key, name] of COLORS) {
+      const b = el("button", "sw col-" + key);
+      b.type = "button";
+      b.dataset.color = key;
+      b.title = name;
+      b.setAttribute("role", "radio");
+      b.setAttribute("aria-label", name);
+      box.appendChild(b);
+    }
+  }
+  function setColor(c) {
+    editorColor = c;
+    $("f-color").querySelectorAll(".sw").forEach((b) => {
+      const on = b.dataset.color === c;
+      b.classList.toggle("selected", on);
+      b.setAttribute("aria-checked", on ? "true" : "false");
+    });
+  }
+
   function applyModeVisibility() {
     editor.querySelectorAll("[data-only]").forEach((node) => {
       node.hidden = !node.dataset.only.split(" ").includes(ed.mode);
@@ -419,6 +471,7 @@
     form.reset();
     let v = { title: "", description: "", results: "", tags: [], status: null };
     let kind = "";
+    let color = ACTIVITY_COLOR;
 
     if (ed.mode === "activity") {
       const a = ed.isNew ? { start: ed.start, end: ed.end } : findActivity(ed.id);
@@ -429,6 +482,7 @@
       setTime($("f-end"), endTimeOf(a.start, a.end));
       setWeekdays([R.weekday(a.start.slice(0, 10))]);
       $("f-until").value = "";
+      color = activityColor(a) || ACTIVITY_COLOR;
       kind = ed.isNew ? "New activity" : "Activity";
     } else if (ed.mode === "occurrence") {
       const s = findSeries(ed.seriesId);
@@ -448,6 +502,7 @@
       setWeekdays(s.weekdays || []);
       $("f-from").value = s.from;
       $("f-until").value = s.until || "";
+      color = seriesColor(s);
       kind = "Whole series";
     } else if (ed.mode === "todo") {
       const t = findTodo(ed.id);
@@ -462,6 +517,7 @@
     $("f-results").value = v.results || "";
     editorTags.set(v.tags || []);
     setStatus(v.status);
+    setColor(color);
     applyModeVisibility();
     if (!editor.open) editor.showModal();
     if (ed.isNew) $("f-title").focus();
@@ -482,6 +538,7 @@
       results: $("f-results").value.replace(/\s+$/, ""),
       tags: editorTags.get(),
       status: editorStatus,
+      color: editorColor,
       date, st, et,
       repeat: $("f-repeat").checked,
       weekdays: getWeekdays(),
@@ -506,6 +563,8 @@
           weekdays: f.weekdays, startTime: f.st, endTime: f.et, from: f.date, until: f.until,
           exceptions: {},
         };
+        // grey (no colour chosen) gives the series default, any other colour carries over
+        setColorField(s, f.color === ACTIVITY_COLOR ? SERIES_COLOR : f.color, SERIES_COLOR);
         if ((f.results || f.status) && R.isOccurrenceDate(s, f.date)) {
           s = R.withException(s, f.date, { results: f.results, status: f.status });
         }
@@ -514,8 +573,9 @@
       } else {
         const fields = { title: f.title, description: f.description, results: f.results,
                          tags: f.tags, status: f.status, start, end };
-        if (ed.isNew) data.activities.push(Object.assign({ id: uid() }, fields));
-        else Object.assign(findActivity(ed.id), fields);
+        const a = ed.isNew ? Object.assign({ id: uid() }, fields) : Object.assign(findActivity(ed.id), fields);
+        setColorField(a, f.color, ACTIVITY_COLOR);
+        if (ed.isNew) data.activities.push(a);
       }
     } else if (ed.mode === "occurrence") {
       const s = findSeries(ed.seriesId);
@@ -533,6 +593,7 @@
       Object.assign(s, { title: f.title, description: f.description, tags: f.tags,
                          weekdays: f.weekdays, startTime: f.st, endTime: f.et,
                          from: f.from, until: f.until });
+      setColorField(s, f.color, SERIES_COLOR);
     } else if (ed.mode === "todo") {
       Object.assign(findTodo(ed.id), { title: f.title, description: f.description, tags: f.tags });
     }
@@ -583,7 +644,12 @@
     timeOptions($("f-start"), false);
     timeOptions($("f-end"), true);
     buildWeekdayPicker();
+    buildColorPicker();
     editorTags = Chips($("f-tags"), $("f-tag-input"));
+    $("f-color").addEventListener("click", (e) => {
+      const b = e.target.closest(".sw");
+      if (b) setColor(b.dataset.color);
+    });
     $("f-status").addEventListener("click", (e) => {
       const b = e.target.closest(".st");
       if (b) setStatus(b.dataset.status || null);
@@ -689,12 +755,15 @@
     for (const a of data.activities) {
       if (a.start >= loB && a.start < hiB) {
         items.push({ kind: "activity", ref: a.id, start: a.start, end: a.end, title: a.title,
-                     description: a.description, results: a.results, status: a.status, tags: a.tags || [] });
+                     description: a.description, results: a.results, status: a.status, tags: a.tags || [],
+                     color: activityColor(a) });
       }
     }
     if ($("include-recurring").checked) {
       for (const o of R.expandAll(data.series, lo, hi)) {
-        if (o.start >= loB && o.start < hiB) items.push(Object.assign({ kind: "occurrence" }, o));
+        if (o.start >= loB && o.start < hiB) {
+          items.push(Object.assign({ kind: "occurrence", color: seriesColor(findSeries(o.seriesId)) }, o));
+        }
       }
     }
     const wanted = filterTags.peek().map((t) => t.toLowerCase());
@@ -721,10 +790,13 @@
     }
     for (const it of items) {
       if (!lineDone && it.start >= now) { box.appendChild(todayLine); lineDone = true; }
-      const row = el("div", "fr-item " + statusClass(it.status) + (it.start < now ? " past" : ""));
+      const row = el("div", "fr-item " + (it.color ? "colored col-" + it.color : statusClass(it.status)) +
+                            (it.start < now ? " past" : ""));
       const when = el("div", "fr-when");
       when.appendChild(el("b", "", fmtDay(it.start.slice(0, 10))));
       when.appendChild(document.createTextNode(fmtRange(it.start, it.end) + (it.kind === "occurrence" ? "  ↻" : "")));
+      const sq = it.color ? statusSquare(it.status) : null;
+      if (sq) when.appendChild(sq);
       const main = el("div", "fr-main");
       if (show.title) main.appendChild(el("div", "fr-title", it.title || "Untitled"));
       for (const k of ["description", "results"]) {

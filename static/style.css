@@ -20,6 +20,16 @@
   --st-red: #d1453b;   --st-red-bg: #fbeceb;
   --rec: #7b6fc4;      --rec-bg: #eeebfa;   /* recurring: fixed, not movable */
 
+  /* Block colours chosen by the user (palette keys in the data). Hues stay away from the
+     status green/yellow/red. grey = no colour (activities), lilac = series default. */
+  --c-grey: var(--st-none); --c-grey-bg: var(--st-none-bg);
+  --c-lilac: var(--rec);    --c-lilac-bg: var(--rec-bg);
+  --c-cyan: #1b8fb0;    --c-cyan-bg: #e3f4f9;
+  --c-blue: #3570c6;    --c-blue-bg: #e6eefa;
+  --c-indigo: #4a57d0;  --c-indigo-bg: #e8eafb;
+  --c-purple: #9a55c4;  --c-purple-bg: #f4eafa;
+  --c-magenta: #c04a9c; --c-magenta-bg: #f9e9f4;
+
   --shadow: 0 10px 30px rgba(20, 25, 35, 0.14);
   --radius: 8px;
   color-scheme: light;
@@ -45,6 +55,12 @@
     --st-yellow: #e5b93a; --st-yellow-bg: #362f1a;
     --st-red: #f06b60;   --st-red-bg: #3a2120;
     --rec: #9d92e6;      --rec-bg: #29263f;
+
+    --c-cyan: #4cbad8;    --c-cyan-bg: #18303a;
+    --c-blue: #6f9fe6;    --c-blue-bg: #1e2c42;
+    --c-indigo: #8590f0;  --c-indigo-bg: #23274a;
+    --c-purple: #bd86e3;  --c-purple-bg: #33243f;
+    --c-magenta: #e07cc0; --c-magenta-bg: #3b2234;
 
     --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
     color-scheme: dark;
@@ -170,10 +186,30 @@ textarea { resize: vertical; width: 100%; }
 .st-green.ev  { border-left-color: var(--st-green);  background: var(--st-green-bg); }
 .st-yellow.ev { border-left-color: var(--st-yellow); background: var(--st-yellow-bg); }
 .st-red.ev    { border-left-color: var(--st-red);    background: var(--st-red-bg); }
-/* Recurring blocks keep their own fill; status shows only on the left border */
-.ev.recurring { background: var(--rec-bg); }
-.ev.recurring.st-none { border-left-color: var(--rec); }
-.ev.recurring .ev-icon { color: var(--rec); }
+/* Colour classes: each sets the pair used by blocks, filter rows and swatches */
+.col-grey    { --cc: var(--c-grey);    --cc-bg: var(--c-grey-bg); }
+.col-cyan    { --cc: var(--c-cyan);    --cc-bg: var(--c-cyan-bg); }
+.col-blue    { --cc: var(--c-blue);    --cc-bg: var(--c-blue-bg); }
+.col-indigo  { --cc: var(--c-indigo);  --cc-bg: var(--c-indigo-bg); }
+.col-lilac   { --cc: var(--c-lilac);   --cc-bg: var(--c-lilac-bg); }
+.col-purple  { --cc: var(--c-purple);  --cc-bg: var(--c-purple-bg); }
+.col-magenta { --cc: var(--c-magenta); --cc-bg: var(--c-magenta-bg); }
+/* Coloured blocks (every series occurrence, activities with a chosen colour) keep their
+   own colour; the status is a small square in the top-right corner */
+.ev.colored { border-left-color: var(--cc); background: var(--cc-bg); }
+.ev.colored .ev-icon { color: var(--cc); }
+.ev-sq {
+  flex: none;
+  align-self: center;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px var(--bg);
+}
+.fc-timegrid-event-short .ev-sq { align-self: flex-start; margin-top: 1px; width: 8px; height: 8px; }
+.ev-sq.sq-green  { background: var(--st-green); }
+.ev-sq.sq-yellow { background: var(--st-yellow); }
+.ev-sq.sq-red    { background: var(--st-red); }
 .ev-top { display: flex; gap: 4px; align-items: baseline; min-width: 0; }
 .ev-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
 .ev-icon { flex: none; color: var(--muted); font-size: 11px; }
@@ -277,6 +313,18 @@ dialog::backdrop { background: rgba(15, 20, 30, 0.28); }
 .st.selected.st-green  { background: var(--st-green-bg);  border-color: var(--st-green); }
 .st.selected.st-yellow { background: var(--st-yellow-bg); border-color: var(--st-yellow); }
 .st.selected.st-red    { background: var(--st-red-bg);    border-color: var(--st-red); }
+.swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+.sw {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 2px solid var(--cc);
+  border-left-width: 6px;
+  background: var(--cc-bg);
+  border-radius: 5px;
+}
+.sw:hover { border-color: var(--cc); filter: brightness(0.95); }
+.sw.selected { outline: 2px solid var(--text); outline-offset: 2px; }
 .toggle { display: inline-flex; align-items: center; gap: 6px; margin: 4px 0; cursor: pointer; }
 .repeat-box { border: 1px solid var(--line-faint); background: var(--surface-2); border-radius: 8px; padding: 10px; margin-top: 6px; }
 .weekdays { display: flex; gap: 4px; margin-bottom: 8px; flex-wrap: wrap; }
@@ -310,6 +358,9 @@ dialog::backdrop { background: rgba(15, 20, 30, 0.28); }
 .fr-item.st-green { border-left-color: var(--st-green); }
 .fr-item.st-yellow { border-left-color: var(--st-yellow); }
 .fr-item.st-red { border-left-color: var(--st-red); }
+.fr-item.colored { border-left-color: var(--cc); background: var(--cc-bg); }
+.fr-item.colored:hover { filter: brightness(0.97); }
+.fr-when .ev-sq { display: inline-block; margin-left: 6px; vertical-align: middle; }
 .fr-item.past { opacity: .82; }
 .fr-when { color: var(--muted); font-size: 13px; }
 .fr-when b { color: var(--text); font-weight: 600; display: block; }
