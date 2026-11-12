@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Organizer</title>
+  <link rel="icon" type="image/png" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Organizer</div>
+    <nav class="views" role="tablist">
+      <button type="button" class="view-btn active" data-view="calendar">Calendar</button>
+      <button type="button" class="view-btn" data-view="filter">Filter</button>
+    </nav>
+    <div class="topbar-right">
+      <span id="save-state" class="save-state" aria-live="polite"></span>
+      <button type="button" id="toggle-todos" class="ghost" title="Show or hide the to-do panel">To-do</button>
+      <button type="button" id="power" class="icon-btn" title="Turn off Organizer" aria-label="Turn off Organizer">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 3v8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M7.05 6.05a7.5 7.5 0 1 0 9.9 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section id="view-calendar" class="view">
+      <div id="calendar"></div>
+    </section>
+
+    <section id="view-filter" class="view" hidden>
+      <div class="filter-controls">
+        <div class="field">
+          <label for="filter-tag-input">Search tags</label>
+          <div class="chips" id="filter-tags"><input id="filter-tag-input" list="tag-list" placeholder="Type a tag, Enter"></div>
+        </div>
+        <div class="field">
+          <span class="label">Show</span>
+          <div class="checks">
+            <label><input type="checkbox" id="show-title" checked> Title</label>
+            <label><input type="checkbox" id="show-description" checked> Description</label>
+            <label><input type="checkbox" id="show-results" checked> Results</label>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label">Window (days)</span>
+          <div class="window">
+            <label>before <input type="number" id="win-before" min="0" max="365" value="7"></label>
+            <label>after <input type="number" id="win-after" min="0" max="365" value="7"></label>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label">&nbsp;</span>
+          <label class="toggle"><input type="checkbox" id="include-recurring"> Include recurring</label>
+        </div>
+      </div>
+      <div id="filter-results" class="filter-results"></div>
+    </section>
+
+    <aside id="todo-panel" class="todo-panel" hidden>
+      <div class="todo-head">
+        <h2>To-do</h2>
+        <span class="hint">Drag onto the calendar</span>
+      </div>
+      <form id="todo-add" class="todo-add" autocomplete="off">
+        <input id="todo-title" placeholder="Add a to-do, Enter">
+      </form>
+      <ul id="todo-list" class="todo-list"></ul>
+    </aside>
+  </main>
+
+  <datalist id="tag-list"></datalist>
+
+  <!-- Choice for recurring occurrences -->
+  <dialog id="scope-dialog" class="small-dialog">
+    <form method="dialog">
+      <p>This is a recurring activity. Edit:</p>
+      <div class="row-buttons">
+        <button value="one" class="primary">Only this</button>
+        <button value="series">Whole series</button>
+        <button value="cancel" class="ghost">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- The one editor: activities, occurrences, series and to-dos -->
+  <dialog id="editor" class="editor">
+    <form id="editor-form" method="dialog" autocomplete="off">
+      <div class="editor-head">
+        <span id="editor-kind" class="editor-kind"></span>
+        <button type="button" class="icon-btn close" data-action="cancel" aria-label="Close">&times;</button>
+      </div>
+
+      <label class="field"><span class="label">Title</span>
+        <input id="f-title" class="title-input" required></label>
+
+      <label class="field"><span class="label">Description</span>
+        <textarea id="f-description" rows="3"></textarea></label>
+
+      <label class="field" data-only="activity occurrence"><span class="label">Results</span>
+        <textarea id="f-results" rows="3"></textarea></label>
+
+      <div class="field"><span class="label">Tags</span>
+        <div class="chips" id="f-tags"><input id="f-tag-input" list="tag-list" placeholder="Add tag, Enter"></div></div>
+
+      <div class="field" data-only="activity occurrence"><span class="label">Status</span>
+        <div class="status-buttons" id="f-status">
+          <button type="button" data-status="" class="st st-none">Not rated</button>
+          <button type="button" data-status="green" class="st st-green">100%</button>
+          <button type="button" data-status="yellow" class="st st-yellow">50-99%</button>
+          <button type="button" data-status="red" class="st st-red">&lt; 50%</button>
+        </div></div>
+
+      <div class="field time-row" data-only="activity occurrence series">
+        <label data-only="activity occurrence"><span class="label">Date</span><input type="date" id="f-date"></label>
+        <label><span class="label">Start</span><select id="f-start"></select></label>
+        <label><span class="label">End</span><select id="f-end"></select></label>
+      </div>
+
+      <label class="toggle" data-only="activity"><input type="checkbox" id="f-repeat"> Repeat weekly</label>
+
+      <div class="repeat-box" id="repeat-box" data-only="activity series">
+        <div class="weekdays" id="f-weekdays"></div>
+        <div class="time-row">
+          <label data-only="series"><span class="label">From</span><input type="date" id="f-from"></label>
+          <label><span class="label">Until</span><input type="date" id="f-until"></label>
+          <span class="hint">Empty = no end. Exceptions after Until are kept, only hidden.</span>
+        </div>
+      </div>
+
+      <div class="editor-actions">
+        <button type="button" class="danger ghost" data-action="delete" id="btn-delete">Delete</button>
+        <button type="button" class="ghost" data-action="reschedule" id="btn-reschedule" title="Copy title and description to a new to-do">Reschedule</button>
+        <span class="spacer"></span>
+        <button type="button" class="ghost" data-action="cancel">Cancel</button>
+        <button type="submit" class="primary" data-action="save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="off-screen" class="off-screen" hidden>
+    <div>
+      <h1>Organizer is off</h1>
+      <p>Double-click <b>Organizer</b> on the Desktop to start it again.</p>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="vendor/fullcalendar/index.global.min.js"></script>
+  <script src="recurrence.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

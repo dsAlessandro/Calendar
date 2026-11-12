@@ -1,0 +1,7 @@
+__pycache__/
+data/backup/
+data/.organizer-*.tmp
+# Personal data: the schedule itself never goes into git.
+data/organizer.json
+# Machine-specific pythonw path for launcher.vbs (see launcher.local.txt.example).
+launcher.local.txt

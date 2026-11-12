@@ -1,0 +1,7 @@
+# Optional, Windows only. Copy this file to launcher.local.txt (git-ignored) and put
+# on the first non-comment line the full path of the pythonw.exe that launcher.vbs must
+# use. %VARS% are expanded. Without launcher.local.txt, launcher.vbs uses pythonw.exe
+# (or pyw.exe) found on PATH. Other typical locations:
+#   %USERPROFILE%\anaconda3\pythonw.exe
+#   %USERPROFILE%\AppData\Local\Programs\Python\Python313\pythonw.exe
+%LOCALAPPDATA%\Programs\Python\Python312\pythonw.exe

@@ -1,0 +1,823 @@
+/* Organizer UI. Vanilla JS + FullCalendar (global bundle) + recurrence.js. */
+(function () {
+  "use strict";
+
+  const R = window.Recurrence;
+  const $ = (id) => document.getElementById(id);
+  const WEEKDAYS = [[1, "Mon"], [2, "Tue"], [3, "Wed"], [4, "Thu"], [5, "Fri"], [6, "Sat"], [0, "Sun"]];
+  const STATUSES = ["green", "yellow", "red"];
+
+  let data = { activities: [], series: [], todos: [] };
+  let calendar = null;
+
+  /* ---------------------------------------------------------------- helpers */
+
+  function uid() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  }
+  const pad = (n) => String(n).padStart(2, "0");
+  function toLocal(d) {             // Date -> "YYYY-MM-DDTHH:MM" (local time)
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
+      "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+  function dateOf(d) { return toLocal(d).slice(0, 10); }
+  function todayStr() { return dateOf(new Date()); }
+  function plusMinutes(localStr, minutes) {
+    const [date, time] = localStr.split("T");
+    const [y, m, d] = date.split("-").map(Number);
+    const [hh, mm] = time.split(":").map(Number);
+    return toLocal(new Date(y, m - 1, d, hh, mm + minutes));
+  }
+  function statusClass(s) { return STATUSES.includes(s) ? "st-" + s : "st-none"; }
+  function fmtDay(dateStr) {
+    const d = R.parseDate(dateStr);
+    return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+  }
+  function fmtRange(start, end) {
+    let e = end.slice(11, 16);
+    if (end.slice(0, 10) > start.slice(0, 10) && e === "00:00") e = "24:00";
+    return start.slice(11, 16) + "–" + e;
+  }
+  function normTags(list) {
+    const out = [];
+    const seen = new Set();
+    for (const raw of list || []) {
+      const t = String(raw).trim().replace(/\s+/g, " ");
+      if (t && !seen.has(t.toLowerCase())) { seen.add(t.toLowerCase()); out.push(t); }
+    }
+    return out;
+  }
+  function allTags() {
+    const all = [];
+    for (const a of data.activities) all.push(...(a.tags || []));
+    for (const t of data.todos) all.push(...(t.tags || []));
+    for (const s of data.series) {
+      all.push(...(s.tags || []));
+      for (const ex of Object.values(s.exceptions || {})) all.push(...(ex.tags || []));
+    }
+    return normTags(all).sort((a, b) => a.localeCompare(b));
+  }
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  let toastTimer = null;
+  function toast(msg) {
+    const t = $("toast");
+    t.textContent = msg;
+    t.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { t.hidden = true; }, 2600);
+  }
+  const findActivity = (id) => data.activities.find((a) => a.id === id);
+  const findSeries = (id) => data.series.find((s) => s.id === id);
+  const findTodo = (id) => data.todos.find((t) => t.id === id);
+  function replaceSeries(s) {
+    data.series = data.series.map((x) => (x.id === s.id ? s : x));
+  }
+
+  /* ------------------------------------------------------------ persistence */
+
+  let saving = false;
+  let dirty = false;
+
+  function setSaveState(text, isError) {
+    const s = $("save-state");
+    s.textContent = text;
+    s.classList.toggle("error", !!isError);
+    s.title = isError ? "Click to retry" : "";
+  }
+
+  async function load() {
+    const res = await fetch("/api/data", { cache: "no-store" });
+    if (!res.ok) throw new Error("GET /api/data " + res.status);
+    const doc = await res.json();
+    data = {
+      activities: Array.isArray(doc.activities) ? doc.activities : [],
+      series: Array.isArray(doc.series) ? doc.series : [],
+      todos: Array.isArray(doc.todos) ? doc.todos : [],
+    };
+  }
+
+  /* Every change goes through here: save the whole document, then redraw. */
+  function changed() {
+    dirty = true;
+    refreshAll();
+    if (!saving) flush();
+  }
+
+  async function flush() {
+    saving = true;
+    setSaveState("Saving…");
+    while (dirty) {
+      dirty = false;
+      try {
+        const res = await fetch("/api/data", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        });
+        if (!res.ok) throw new Error("PUT " + res.status + " " + (await res.text()));
+      } catch (err) {
+        dirty = true;
+        saving = false;
+        setSaveState("Not saved", true);
+        console.error(err);
+        return false;
+      }
+    }
+    saving = false;
+    setSaveState("Saved");
+    return true;
+  }
+
+  async function waitForSave() {
+    for (let i = 0; i < 50 && saving; i++) await new Promise((r) => setTimeout(r, 100));
+    if (dirty) return flush();
+    return true;
+  }
+
+  /* --------------------------------------------------------------- calendar */
+
+  function buildEvents(rangeStartDate, rangeEndDate) {
+    const lo = dateOf(rangeStartDate);
+    const hi = dateOf(rangeEndDate);
+    const loB = lo + "T00:00";
+    const hiB = hi + "T00:00";
+    const events = [];
+    for (const a of data.activities) {
+      if (!(a.end > loB && a.start < hiB)) continue;
+      events.push({
+        id: a.id, title: a.title, start: a.start, end: a.end,
+        extendedProps: { kind: "activity", ref: a.id, description: a.description, status: a.status },
+      });
+    }
+    for (const o of R.expandAll(data.series, lo, hi)) {
+      events.push({
+        id: o.id, title: o.title, start: o.start, end: o.end,
+        extendedProps: { kind: "occurrence", seriesId: o.seriesId, date: o.date,
+                         description: o.description, status: o.status },
+      });
+    }
+    return events;
+  }
+
+  function renderEvent(arg) {
+    const p = arg.event.extendedProps || {};
+    const box = el("div", "ev " + statusClass(p.status) + (p.kind === "occurrence" ? " recurring" : ""));
+    const top = el("div", "ev-top");
+    top.appendChild(el("span", "ev-title", arg.event.title || ""));
+    if (p.kind === "occurrence") {
+      const icon = el("span", "ev-icon", "↻");
+      icon.title = "Recurring";
+      top.appendChild(icon);
+    }
+    box.appendChild(top);
+    if (arg.timeText) box.appendChild(el("div", "ev-time", arg.timeText));
+    if (p.description) box.appendChild(el("div", "ev-desc", p.description));
+    box.title = (arg.event.title || "") + (p.description ? "\n\n" + p.description : "");
+    return { domNodes: [box] };
+  }
+
+  /* Fit the description to the height that is left: whole lines only. */
+  function clampDescription(info) {
+    requestAnimationFrame(() => {
+      const box = info.el.querySelector(".ev");
+      const desc = box && box.querySelector(".ev-desc");
+      if (!desc || getComputedStyle(desc).display === "none") return;
+      const avail = box.getBoundingClientRect().bottom - desc.getBoundingClientRect().top - 2;
+      const lines = Math.floor(avail / 16);
+      if (lines < 1) desc.style.display = "none";
+      else desc.style.webkitLineClamp = String(lines);
+    });
+  }
+
+  function eventTimes(ev) {
+    const start = toLocal(ev.start);
+    const end = ev.end ? toLocal(ev.end) : plusMinutes(start, 60);
+    return { start, end };
+  }
+
+  function onMoveOrResize(info) {
+    const p = info.event.extendedProps;
+    const { start, end } = eventTimes(info.event);
+    if (p.kind === "activity") {
+      const a = findActivity(p.ref);
+      if (!a) return info.revert();
+      a.start = start;
+      a.end = end;
+    } else if (p.kind === "occurrence") {
+      const s = findSeries(p.seriesId);
+      if (!s) return info.revert();
+      // indexed by the ORIGINAL date, whatever the new date is
+      replaceSeries(R.withException(s, p.date, { start, end }));
+    }
+    changed();
+  }
+
+  function onReceiveTodo(info) {
+    const p = info.event.extendedProps;
+    const todo = findTodo(p.todoId);
+    info.event.remove();
+    if (!todo) return;
+    const start = toLocal(info.event.start);
+    data.activities.push({
+      id: uid(), title: todo.title, description: todo.description || "", results: "",
+      tags: normTags(todo.tags), status: null, start, end: plusMinutes(start, 60),
+    });
+    data.todos = data.todos.filter((t) => t.id !== todo.id);
+    changed();
+  }
+
+  function openFromEventProps(p) {
+    if (p.kind === "activity") return openEditor({ mode: "activity", id: p.ref });
+    if (p.kind === "occurrence") {
+      return askScope().then((scope) => {
+        if (scope === "one") openEditor({ mode: "occurrence", seriesId: p.seriesId, date: p.date });
+        else if (scope === "series") openEditor({ mode: "series", seriesId: p.seriesId });
+      });
+    }
+  }
+
+  function initCalendar() {
+    const hourFmt = { hour: "2-digit", minute: "2-digit", hour12: false };
+    const now = new Date();
+    calendar = new FullCalendar.Calendar($("calendar"), {
+      initialView: "timeGridWeek",
+      firstDay: 1,
+      slotMinTime: "07:00:00",
+      slotMaxTime: "24:00:00",
+      slotDuration: "00:30:00",
+      snapDuration: "00:15:00",
+      scrollTime: pad(Math.min(20, Math.max(7, now.getHours() - 1))) + ":00:00",
+      allDaySlot: false,
+      nowIndicator: true,
+      height: "100%",
+      expandRows: true,
+      slotLabelFormat: hourFmt,
+      eventTimeFormat: hourFmt,
+      dayHeaderFormat: { weekday: "short", day: "numeric", month: "numeric", omitCommas: true },
+      headerToolbar: { left: "prev,next today", center: "title", right: "" },
+      editable: true,
+      selectable: true,
+      selectMirror: true,
+      droppable: true,
+      eventDurationEditable: true,
+      events: (info, ok) => ok(buildEvents(info.start, info.end)),
+      eventContent: renderEvent,
+      eventDidMount: clampDescription,
+      eventClick: (info) => { info.jsEvent.preventDefault(); openFromEventProps(info.event.extendedProps); },
+      select: (info) => {
+        calendar.unselect();
+        openEditor({ mode: "activity", isNew: true, start: toLocal(info.start), end: toLocal(info.end) });
+      },
+      eventDrop: onMoveOrResize,
+      eventResize: onMoveOrResize,
+      eventReceive: onReceiveTodo,
+    });
+    calendar.render();
+
+    new FullCalendar.Draggable($("todo-list"), {
+      itemSelector: ".todo",
+      eventData: (item) => ({
+        title: item.dataset.title,
+        duration: "01:00",
+        create: true,
+        extendedProps: { kind: "todo", todoId: item.dataset.id },
+      }),
+    });
+  }
+
+  /* ------------------------------------------------------------------ chips */
+
+  function Chips(container, input, onChange) {
+    let tags = [];
+    const render = () => {
+      container.querySelectorAll(".chip").forEach((c) => c.remove());
+      for (const t of tags) {
+        const chip = el("span", "chip");
+        chip.appendChild(el("span", "", t));
+        const x = el("button", "", "×");
+        x.type = "button";
+        x.title = "Remove";
+        x.addEventListener("click", () => { tags = tags.filter((y) => y !== t); render(); onChange && onChange(); });
+        chip.appendChild(x);
+        container.insertBefore(chip, input);
+      }
+    };
+    const commit = () => {
+      const v = input.value.replace(/,/g, " ").trim();
+      input.value = "";
+      if (!v) return false;
+      tags = normTags(tags.concat([v]));
+      render();
+      onChange && onChange();
+      return true;
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === ",") {
+        e.preventDefault();
+        commit();
+      } else if (e.key === "Backspace" && !input.value && tags.length) {
+        tags.pop();
+        render();
+        onChange && onChange();
+      }
+    });
+    input.addEventListener("input", (e) => {
+      // picking a suggestion from the datalist adds it straight away
+      if (!e.inputType || e.inputType === "insertReplacementText") {
+        if (allTags().some((t) => t.toLowerCase() === input.value.trim().toLowerCase())) commit();
+      }
+    });
+    container.addEventListener("click", (e) => { if (e.target === container) input.focus(); });
+    return {
+      get: () => { commit(); return tags.slice(); },
+      peek: () => tags.slice(),
+      set: (list) => { tags = normTags(list); input.value = ""; render(); },
+    };
+  }
+
+  /* ----------------------------------------------------------------- editor */
+
+  const editor = $("editor");
+  const form = $("editor-form");
+  let ed = null;            // what the editor is editing
+  let editorTags = null;
+  let editorStatus = null;
+
+  function timeOptions(select, includeEnd) {
+    select.innerHTML = "";
+    const last = includeEnd ? 24 * 60 : 24 * 60 - 15;
+    for (let m = 0; m <= last; m += 15) {
+      const v = pad(Math.floor(m / 60)) + ":" + pad(m % 60);
+      select.appendChild(new Option(v, v));
+    }
+  }
+  function setTime(select, v) {
+    if (![...select.options].some((o) => o.value === v)) select.appendChild(new Option(v, v));
+    select.value = v;
+  }
+  function endTimeOf(start, end) {
+    const t = end.slice(11, 16);
+    return end.slice(0, 10) > start.slice(0, 10) && t === "00:00" ? "24:00" : t;
+  }
+  function combine(date, st, et) {
+    const start = date + "T" + st;
+    let end;
+    if (et === "24:00") end = R.addDays(date, 1) + "T00:00";
+    else if (et <= st) end = R.addDays(date, 1) + "T" + et;
+    else end = date + "T" + et;
+    return { start, end };
+  }
+
+  function buildWeekdayPicker() {
+    const box = $("f-weekdays");
+    box.innerHTML = "";
+    for (const [n, name] of WEEKDAYS) {
+      const lab = el("label");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = String(n);
+      cb.addEventListener("change", () => lab.classList.toggle("on", cb.checked));
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(name));
+      box.appendChild(lab);
+    }
+  }
+  function setWeekdays(list) {
+    $("f-weekdays").querySelectorAll("input").forEach((cb) => {
+      cb.checked = list.includes(Number(cb.value));
+      cb.parentElement.classList.toggle("on", cb.checked);
+    });
+  }
+  function getWeekdays() {
+    return [...$("f-weekdays").querySelectorAll("input:checked")].map((cb) => Number(cb.value)).sort();
+  }
+
+  function setStatus(s) {
+    editorStatus = STATUSES.includes(s) ? s : null;
+    $("f-status").querySelectorAll(".st").forEach((b) => {
+      b.classList.toggle("selected", (b.dataset.status || null) === editorStatus);
+    });
+  }
+
+  function applyModeVisibility() {
+    editor.querySelectorAll("[data-only]").forEach((node) => {
+      node.hidden = !node.dataset.only.split(" ").includes(ed.mode);
+    });
+    if (ed.mode === "activity" && !$("f-repeat").checked) $("repeat-box").hidden = true;
+    $("btn-delete").hidden = !!ed.isNew;
+    $("btn-reschedule").hidden = ed.mode === "todo" || ed.mode === "series";
+  }
+
+  function openEditor(target) {
+    ed = Object.assign({}, target);
+    form.reset();
+    let v = { title: "", description: "", results: "", tags: [], status: null };
+    let kind = "";
+
+    if (ed.mode === "activity") {
+      const a = ed.isNew ? { start: ed.start, end: ed.end } : findActivity(ed.id);
+      if (!a) return;
+      v = Object.assign(v, a);
+      $("f-date").value = a.start.slice(0, 10);
+      setTime($("f-start"), a.start.slice(11, 16));
+      setTime($("f-end"), endTimeOf(a.start, a.end));
+      setWeekdays([R.weekday(a.start.slice(0, 10))]);
+      $("f-until").value = "";
+      kind = ed.isNew ? "New activity" : "Activity";
+    } else if (ed.mode === "occurrence") {
+      const s = findSeries(ed.seriesId);
+      const o = s && R.occurrence(s, ed.date);
+      if (!o) return;
+      v = Object.assign(v, o);
+      $("f-date").value = o.start.slice(0, 10);
+      setTime($("f-start"), o.start.slice(11, 16));
+      setTime($("f-end"), endTimeOf(o.start, o.end));
+      kind = "Only this occurrence · " + fmtDay(ed.date);
+    } else if (ed.mode === "series") {
+      const s = findSeries(ed.seriesId);
+      if (!s) return;
+      v = Object.assign(v, s);
+      setTime($("f-start"), s.startTime);
+      setTime($("f-end"), s.endTime);
+      setWeekdays(s.weekdays || []);
+      $("f-from").value = s.from;
+      $("f-until").value = s.until || "";
+      kind = "Whole series";
+    } else if (ed.mode === "todo") {
+      const t = findTodo(ed.id);
+      if (!t) return;
+      v = Object.assign(v, t);
+      kind = "To-do";
+    }
+
+    $("editor-kind").textContent = kind;
+    $("f-title").value = v.title || "";
+    $("f-description").value = v.description || "";
+    $("f-results").value = v.results || "";
+    editorTags.set(v.tags || []);
+    setStatus(v.status);
+    applyModeVisibility();
+    if (!editor.open) editor.showModal();
+    if (ed.isNew) $("f-title").focus();
+  }
+
+  function closeEditor() {
+    if (editor.open) editor.close();
+    ed = null;
+  }
+
+  function readForm() {
+    const date = $("f-date").value;
+    const st = $("f-start").value;
+    const et = $("f-end").value;
+    return {
+      title: $("f-title").value.trim(),
+      description: $("f-description").value.replace(/\s+$/, ""),
+      results: $("f-results").value.replace(/\s+$/, ""),
+      tags: editorTags.get(),
+      status: editorStatus,
+      date, st, et,
+      repeat: $("f-repeat").checked,
+      weekdays: getWeekdays(),
+      from: $("f-from").value,
+      until: $("f-until").value || null,
+    };
+  }
+
+  function saveEditor() {
+    if (!ed) return;
+    const f = readForm();
+    if (!f.title) { $("f-title").focus(); toast("Title is empty"); return; }
+
+    if (ed.mode === "activity") {
+      if (!f.date) return toast("Pick a date");
+      const { start, end } = combine(f.date, f.st, f.et);
+      if (f.repeat) {
+        if (!f.weekdays.length) return toast("Pick at least one weekday");
+        if (f.until && f.until < f.date) return toast("Until is before the start date");
+        let s = {
+          id: uid(), title: f.title, description: f.description, tags: f.tags,
+          weekdays: f.weekdays, startTime: f.st, endTime: f.et, from: f.date, until: f.until,
+          exceptions: {},
+        };
+        if ((f.results || f.status) && R.isOccurrenceDate(s, f.date)) {
+          s = R.withException(s, f.date, { results: f.results, status: f.status });
+        }
+        data.series.push(s);
+        if (!ed.isNew) data.activities = data.activities.filter((a) => a.id !== ed.id);
+      } else {
+        const fields = { title: f.title, description: f.description, results: f.results,
+                         tags: f.tags, status: f.status, start, end };
+        if (ed.isNew) data.activities.push(Object.assign({ id: uid() }, fields));
+        else Object.assign(findActivity(ed.id), fields);
+      }
+    } else if (ed.mode === "occurrence") {
+      const s = findSeries(ed.seriesId);
+      const { start, end } = combine(f.date, f.st, f.et);
+      replaceSeries(R.withException(s, ed.date, {
+        title: f.title, description: f.description, results: f.results,
+        tags: f.tags, status: f.status, start, end,
+      }));
+    } else if (ed.mode === "series") {
+      if (!f.weekdays.length) return toast("Pick at least one weekday");
+      if (!f.from) return toast("Pick a From date");
+      if (f.until && f.until < f.from) return toast("Until is before From");
+      const s = findSeries(ed.seriesId);
+      // exceptions are left untouched: those outside the new range are only hidden
+      Object.assign(s, { title: f.title, description: f.description, tags: f.tags,
+                         weekdays: f.weekdays, startTime: f.st, endTime: f.et,
+                         from: f.from, until: f.until });
+    } else if (ed.mode === "todo") {
+      Object.assign(findTodo(ed.id), { title: f.title, description: f.description, tags: f.tags });
+    }
+    closeEditor();
+    changed();
+  }
+
+  function deleteFromEditor() {
+    if (!ed || ed.isNew) return;
+    if (ed.mode === "activity") {
+      if (!confirm("Delete this activity?")) return;
+      data.activities = data.activities.filter((a) => a.id !== ed.id);
+    } else if (ed.mode === "occurrence") {
+      if (!confirm("Delete only this occurrence?")) return;
+      replaceSeries(R.withException(findSeries(ed.seriesId), ed.date, { cancelled: true }));
+    } else if (ed.mode === "series") {
+      if (!confirm("Delete the whole series, with every occurrence and its results?")) return;
+      data.series = data.series.filter((s) => s.id !== ed.seriesId);
+    } else if (ed.mode === "todo") {
+      data.todos = data.todos.filter((t) => t.id !== ed.id);
+    }
+    closeEditor();
+    changed();
+  }
+
+  /* The block keeps showing the plan: reschedule only adds a to-do. */
+  function rescheduleFromEditor() {
+    const f = readForm();
+    data.todos.unshift({
+      id: uid(), title: f.title || "Untitled", description: f.description,
+      tags: f.tags, created: toLocal(new Date()),
+    });
+    showTodoPanel(true);
+    changed();
+    toast("Added to the to-do list");
+  }
+
+  function askScope() {
+    const dlg = $("scope-dialog");
+    return new Promise((resolve) => {
+      dlg.returnValue = "cancel";
+      dlg.addEventListener("close", () => resolve(dlg.returnValue || "cancel"), { once: true });
+      dlg.showModal();
+    });
+  }
+
+  function initEditor() {
+    timeOptions($("f-start"), false);
+    timeOptions($("f-end"), true);
+    buildWeekdayPicker();
+    editorTags = Chips($("f-tags"), $("f-tag-input"));
+    $("f-status").addEventListener("click", (e) => {
+      const b = e.target.closest(".st");
+      if (b) setStatus(b.dataset.status || null);
+    });
+    $("f-repeat").addEventListener("change", () => {
+      if (ed) applyModeVisibility();
+      $("repeat-box").hidden = !$("f-repeat").checked;
+    });
+    $("f-start").addEventListener("change", () => {
+      // keep the duration sensible: end never before start
+      if ($("f-end").value <= $("f-start").value && $("f-end").value !== "24:00") {
+        const [h, m] = $("f-start").value.split(":").map(Number);
+        const t = Math.min(24 * 60, h * 60 + m + 60);
+        setTime($("f-end"), pad(Math.floor(t / 60)) + ":" + pad(t % 60));
+      }
+    });
+    form.addEventListener("submit", (e) => { e.preventDefault(); saveEditor(); });
+    form.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveEditor(); }
+    });
+    form.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-action]");
+      if (!b) return;
+      const a = b.dataset.action;
+      if (a === "cancel") closeEditor();
+      else if (a === "delete") deleteFromEditor();
+      else if (a === "reschedule") rescheduleFromEditor();
+    });
+    editor.addEventListener("close", () => { ed = null; });
+  }
+
+  /* ------------------------------------------------------------------ to-do */
+
+  function renderTodos() {
+    const list = $("todo-list");
+    list.innerHTML = "";
+    if (!data.todos.length) {
+      list.appendChild(el("li", "todo-empty", "Nothing to reschedule."));
+      return;
+    }
+    for (const t of data.todos) {
+      const li = el("li", "todo");
+      li.dataset.id = t.id;
+      li.dataset.title = t.title;
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.title = "Done: remove it";
+      cb.addEventListener("change", () => {
+        data.todos = data.todos.filter((x) => x.id !== t.id);
+        changed();
+      });
+      const body = el("div", "todo-body");
+      body.appendChild(el("div", "todo-title", t.title));
+      if (t.description) body.appendChild(el("div", "todo-desc", t.description));
+      if (t.tags && t.tags.length) {
+        const tg = el("div");
+        for (const x of t.tags) tg.appendChild(el("span", "tag", x));
+        body.appendChild(tg);
+      }
+      body.title = t.title + (t.description ? "\n\n" + t.description : "");
+      body.addEventListener("click", () => openEditor({ mode: "todo", id: t.id }));
+      li.appendChild(cb);
+      li.appendChild(body);
+      list.appendChild(li);
+    }
+  }
+
+  function showTodoPanel(show) {
+    $("todo-panel").hidden = !show;
+    $("toggle-todos").classList.toggle("on", show);
+    try { localStorage.setItem("organizer.todos", show ? "1" : "0"); } catch (e) { /* ignore */ }
+    if (calendar) setTimeout(() => calendar.updateSize(), 0);
+  }
+
+  function initTodos() {
+    $("todo-add").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const title = $("todo-title").value.trim();
+      if (!title) return;
+      data.todos.unshift({ id: uid(), title, description: "", tags: [], created: toLocal(new Date()) });
+      $("todo-title").value = "";
+      changed();
+    });
+    $("toggle-todos").addEventListener("click", () => showTodoPanel($("todo-panel").hidden));
+    let open = false;
+    try { open = localStorage.getItem("organizer.todos") === "1"; } catch (e) { /* ignore */ }
+    showTodoPanel(open);
+  }
+
+  /* ----------------------------------------------------------------- filter */
+
+  let filterTags = null;
+
+  function filterItems() {
+    const before = Math.max(0, parseInt($("win-before").value, 10) || 0);
+    const after = Math.max(0, parseInt($("win-after").value, 10) || 0);
+    const today = todayStr();
+    const lo = R.addDays(today, -before);
+    const hi = R.addDays(today, after + 1);
+    const loB = lo + "T00:00";
+    const hiB = hi + "T00:00";
+    let items = [];
+    for (const a of data.activities) {
+      if (a.start >= loB && a.start < hiB) {
+        items.push({ kind: "activity", ref: a.id, start: a.start, end: a.end, title: a.title,
+                     description: a.description, results: a.results, status: a.status, tags: a.tags || [] });
+      }
+    }
+    if ($("include-recurring").checked) {
+      for (const o of R.expandAll(data.series, lo, hi)) {
+        if (o.start >= loB && o.start < hiB) items.push(Object.assign({ kind: "occurrence" }, o));
+      }
+    }
+    const wanted = filterTags.peek().map((t) => t.toLowerCase());
+    if (wanted.length) {
+      items = items.filter((it) => (it.tags || []).some((t) => wanted.includes(t.toLowerCase())));
+    }
+    return items.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
+  }
+
+  function renderFilter() {
+    if ($("view-filter").hidden) return;
+    const box = $("filter-results");
+    box.innerHTML = "";
+    const show = { title: $("show-title").checked, description: $("show-description").checked,
+                   results: $("show-results").checked };
+    const items = filterItems();
+    const now = toLocal(new Date());
+    const todayLine = el("div", "today-line", "Today · " + fmtDay(todayStr()) + " " + now.slice(11, 16));
+    let lineDone = false;
+    if (!items.length) {
+      box.appendChild(todayLine);
+      box.appendChild(el("div", "fr-empty", "Nothing in this window."));
+      return;
+    }
+    for (const it of items) {
+      if (!lineDone && it.start >= now) { box.appendChild(todayLine); lineDone = true; }
+      const row = el("div", "fr-item " + statusClass(it.status) + (it.start < now ? " past" : ""));
+      const when = el("div", "fr-when");
+      when.appendChild(el("b", "", fmtDay(it.start.slice(0, 10))));
+      when.appendChild(document.createTextNode(fmtRange(it.start, it.end) + (it.kind === "occurrence" ? "  ↻" : "")));
+      const main = el("div", "fr-main");
+      if (show.title) main.appendChild(el("div", "fr-title", it.title || "Untitled"));
+      for (const k of ["description", "results"]) {
+        if (show[k] && it[k]) {
+          const t = el("div", "fr-text");
+          t.appendChild(el("span", "k", k));
+          t.appendChild(document.createTextNode(it[k]));
+          main.appendChild(t);
+        }
+      }
+      if (it.tags && it.tags.length) {
+        const tg = el("div", "fr-tags");
+        for (const x of it.tags) tg.appendChild(el("span", "tag", x));
+        main.appendChild(tg);
+      }
+      row.appendChild(when);
+      row.appendChild(main);
+      row.addEventListener("click", () => openFromEventProps(
+        it.kind === "activity" ? { kind: "activity", ref: it.ref }
+                               : { kind: "occurrence", seriesId: it.seriesId, date: it.date }));
+      box.appendChild(row);
+    }
+    if (!lineDone) box.appendChild(todayLine);
+  }
+
+  function initFilter() {
+    filterTags = Chips($("filter-tags"), $("filter-tag-input"), renderFilter);
+    for (const id of ["show-title", "show-description", "show-results", "include-recurring", "win-before", "win-after"]) {
+      $(id).addEventListener("input", renderFilter);
+      $(id).addEventListener("change", renderFilter);
+    }
+  }
+
+  /* ------------------------------------------------------------ view, power */
+
+  function setView(name) {
+    document.querySelectorAll(".view-btn").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
+    $("view-calendar").hidden = name !== "calendar";
+    $("view-filter").hidden = name !== "filter";
+    if (name === "calendar") calendar.updateSize();
+    else renderFilter();
+  }
+
+  function refreshDatalist() {
+    const dl = $("tag-list");
+    dl.innerHTML = "";
+    for (const t of allTags()) dl.appendChild(new Option(t, t));
+  }
+
+  function refreshAll() {
+    if (calendar) calendar.refetchEvents();
+    renderTodos();
+    renderFilter();
+    refreshDatalist();
+  }
+
+  function showOff(title, text) {
+    const off = $("off-screen");
+    if (title) off.querySelector("h1").textContent = title;
+    if (text) off.querySelector("p").textContent = text;
+    off.hidden = false;
+    document.title = "Organizer (off)";
+  }
+
+  async function powerOff() {
+    const ok = await waitForSave();
+    if (!ok && !confirm("The last change is NOT saved. Turn off anyway?")) return;
+    try { await fetch("/api/shutdown", { method: "POST" }); } catch (e) { /* already off */ }
+    if (editor.open) editor.close();
+    showOff();
+  }
+
+  async function main() {
+    try {
+      await load();
+    } catch (err) {
+      console.error(err);
+      showOff("Organizer is not running", "Double-click Organizer on the Desktop to start it.");
+      return;
+    }
+    initEditor();
+    initTodos();
+    initFilter();
+    initCalendar();
+    document.querySelectorAll(".view-btn").forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
+    $("power").addEventListener("click", powerOff);
+    $("save-state").addEventListener("click", () => { if (dirty && !saving) flush(); });
+    window.addEventListener("beforeunload", (e) => {
+      if (dirty || saving) { e.preventDefault(); e.returnValue = ""; }
+    });
+    refreshAll();
+    setSaveState("");
+  }
+
+  main();
+})();

@@ -1,0 +1,117 @@
+<!doctype html>
+<!-- Tests for static/recurrence.js. Open in a browser, or headless:
+     msedge --headless --disable-gpu --dump-dom file:///.../tests/recurrence-test.html
+     and look for RESULT: in the output. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Recurrence tests</title></head>
+<body>
+<pre id="out"></pre>
+<script src="../static/recurrence.js"></script>
+<script>
+"use strict";
+const R = window.Recurrence;
+const lines = [];
+let fails = 0, passes = 0;
+function eq(name, got, want) {
+  const g = JSON.stringify(got), w = JSON.stringify(want);
+  if (g === w) { passes++; lines.push("PASS " + name); }
+  else { fails++; lines.push("FAIL " + name + "\n   got  " + g + "\n   want " + w); }
+}
+function run(name, fn) {
+  try { fn(); } catch (e) { fails++; lines.push("FAIL " + name + " threw " + e); }
+}
+
+// Mon/Wed 10:00-12:00, from Mon 2026-11-02 until Wed 2026-11-25
+const base = {
+  id: "s1", title: "Lab", description: "notes", tags: ["course"],
+  weekdays: [1, 3], startTime: "10:00", endTime: "12:00",
+  from: "2026-11-02", until: "2026-11-25", exceptions: {},
+};
+const dates = (list) => list.map((o) => o.date);
+const starts = (list) => list.map((o) => o.start);
+
+run("expansion", () => {
+  eq("weekday of 2026-11-02 is Monday", R.weekday("2026-11-02"), 1);
+  const all = R.expandSeries(base, "2026-10-01", "2027-01-01");
+  eq("all dates", dates(all), ["2026-11-02","2026-11-04","2026-11-09","2026-11-11",
+    "2026-11-16","2026-11-18","2026-11-23","2026-11-25"]);
+  eq("default times", [all[0].start, all[0].end], ["2026-11-02T10:00", "2026-11-02T12:00"]);
+  eq("one week range [9, 16)", dates(R.expandSeries(base, "2026-11-09", "2026-11-16")),
+     ["2026-11-09", "2026-11-11"]);
+  eq("nothing before from", R.expandSeries(base, "2026-10-01", "2026-11-02").length, 0);
+  eq("until is inclusive", dates(R.expandSeries(base, "2026-11-25", "2026-11-26")), ["2026-11-25"]);
+  const open = Object.assign({}, base, { until: null });
+  eq("no until: keeps going", dates(R.expandSeries(open, "2027-03-01", "2027-03-08")),
+     ["2027-03-01", "2027-03-03"]);
+  const late = Object.assign({}, base, { startTime: "22:00", endTime: "24:00" });
+  eq("24:00 ends next day 00:00", R.occurrence(late, "2026-11-02").end, "2026-11-03T00:00");
+  eq("ids", all[0].id, "s1::2026-11-02");
+  eq("series results/status default", [all[0].results, all[0].status], ["", null]);
+});
+
+run("exception on one date", () => {
+  let s = R.withException(base, "2026-11-11", { title: "Lab (room B)", results: "done", status: "green" });
+  eq("input not mutated", Object.keys(base.exceptions).length, 0);
+  eq("only changed fields stored", s.exceptions["2026-11-11"], { title: "Lab (room B)", results: "done", status: "green" });
+  const wk = R.expandSeries(s, "2026-11-09", "2026-11-16");
+  eq("other date untouched", [wk[0].title, wk[0].status], ["Lab", null]);
+  eq("edited date overridden", [wk[1].title, wk[1].results, wk[1].status], ["Lab (room B)", "done", "green"]);
+
+  // move Wed 11 to Fri 13 14:00-15:00: still keyed by the ORIGINAL date
+  s = R.withException(s, "2026-11-11", { start: "2026-11-13T14:00", end: "2026-11-13T15:00" });
+  eq("moved: key stays 2026-11-11", Object.keys(s.exceptions), ["2026-11-11"]);
+  const moved = R.expandSeries(s, "2026-11-09", "2026-11-16");
+  eq("moved occurrence", moved.map((o) => [o.date, o.start]), [["2026-11-09", "2026-11-09T10:00"], ["2026-11-11", "2026-11-13T14:00"]]);
+  // moved INTO a range from an original date outside it
+  eq("moved into range [13, 14)", dates(R.expandSeries(s, "2026-11-13", "2026-11-14")), ["2026-11-11"]);
+  eq("moved out of range [11, 12)", dates(R.expandSeries(s, "2026-11-11", "2026-11-12")), []);
+
+  // cancel one date
+  const c = R.withException(s, "2026-11-16", { cancelled: true });
+  eq("cancelled date hidden", dates(R.expandSeries(c, "2026-11-16", "2026-11-23")), ["2026-11-18"]);
+
+  // setting a field back to the series value removes it from the exception
+  const back = R.withException(base, "2026-11-04", { title: "X" });
+  const reset = R.withException(back, "2026-11-04", { title: "Lab" });
+  eq("reset to default drops the exception", reset.exceptions, {});
+
+  // editing the whole series still reaches dates without that override
+  const renamed = Object.assign({}, s, { title: "Lab v2" });
+  const r = R.expandSeries(renamed, "2026-11-09", "2026-11-16");
+  eq("series edit propagates, override kept", [r[0].title, r[1].title], ["Lab v2", "Lab (room B)"]);
+});
+
+run("until shortened, exceptions kept", () => {
+  let s = R.withException(base, "2026-11-23", { results: "late one", status: "yellow" });
+  s = R.withException(s, "2026-11-25", { cancelled: true });
+  const short = Object.assign({}, s, { until: "2026-11-15" });
+  eq("short: last date 2026-11-11", dates(R.expandSeries(short, "2026-10-01", "2027-01-01")).slice(-1), ["2026-11-11"]);
+  eq("short: exceptions still in data", Object.keys(short.exceptions).sort(), ["2026-11-23", "2026-11-25"]);
+  // a moved exception whose original date is after until is hidden too
+  const mv = R.withException(short, "2026-11-23", { start: "2026-11-12T09:00", end: "2026-11-12T10:00" });
+  eq("short: moved exception after until hidden", dates(R.expandSeries(mv, "2026-11-12", "2026-11-13")), []);
+  const longer = Object.assign({}, short, { until: "2026-11-30" });
+  const back = R.expandSeries(longer, "2026-11-23", "2026-12-01");
+  eq("extended again: exception comes back", back.map((o) => [o.date, o.results, o.status]),
+     [["2026-11-23", "late one", "yellow"], ["2026-11-30", "", null]]);
+  eq("extended again: cancelled 25 still cancelled", dates(back).includes("2026-11-25"), false);
+});
+
+run("weekday removed hides its exceptions", () => {
+  const s = R.withException(base, "2026-11-04", { title: "wed" });
+  const monOnly = Object.assign({}, s, { weekdays: [1] });
+  eq("wed gone", dates(R.expandSeries(monOnly, "2026-11-02", "2026-11-09")), ["2026-11-02"]);
+  eq("wed exception kept", Object.keys(monOnly.exceptions), ["2026-11-04"]);
+});
+
+run("DST week (EU summer time ends 2026-10-25)", () => {
+  const s = Object.assign({}, base, { from: "2026-10-19", until: "2026-11-01" });
+  eq("dates across DST", dates(R.expandSeries(s, "2026-10-19", "2026-11-02")),
+     ["2026-10-19", "2026-10-21", "2026-10-26", "2026-10-28"]);
+});
+
+lines.push("RESULT: " + passes + " passed, " + fails + " failed");
+document.getElementById("out").textContent = lines.join("\n");
+</script>
+</body>
+</html>
