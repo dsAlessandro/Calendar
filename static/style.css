@@ -232,6 +232,41 @@ textarea { resize: vertical; width: 100%; }
   white-space: pre-line;
 }
 .fc-timegrid-event-short .ev-time, .fc-timegrid-event-short .ev-desc { display: none; }
+/* Tags: pinned to the bottom of the block. Hidden until fitBlock (app.js) finds room for at
+   least one whole row; max-height then cuts the rows that do not fit. */
+.ev { position: relative; --acc: var(--st-none); }
+.st-green.ev  { --acc: var(--st-green); }
+.st-yellow.ev { --acc: var(--st-yellow); }
+.st-red.ev    { --acc: var(--st-red); }
+.ev.colored   { --acc: var(--cc); }
+.ev-tags {
+  display: none;
+  position: absolute;
+  left: 7px;
+  right: 6px;
+  bottom: 2px;
+  flex-wrap: wrap;
+  gap: 2px;
+  overflow: hidden;
+}
+.ev-tags.fits { display: flex; }
+.fc-timegrid-event-short .ev-tags { display: none !important; }
+.ev-tag {
+  flex: none;
+  max-width: 100%;
+  height: 14px;
+  padding: 0 5px;
+  border: 1px solid var(--acc);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .fc-event-mirror .ev { opacity: .85; }
 
 /* To-do panel. Its left border is the resize handle: drag to resize, double-click to reset. */

@@ -224,7 +224,7 @@
       events.push({
         id: a.id, title: a.title, start: a.start, end: a.end,
         extendedProps: { kind: "activity", ref: a.id, description: a.description, status: a.status,
-                         color: activityColor(a) },
+                         color: activityColor(a), tags: a.tags || [] },
       });
     }
     for (const o of R.expandAll(data.series, lo, hi)) {
@@ -232,7 +232,7 @@
         id: o.id, title: o.title, start: o.start, end: o.end,
         extendedProps: { kind: "occurrence", seriesId: o.seriesId, date: o.date,
                          description: o.description, status: o.status,
-                         color: seriesColor(findSeries(o.seriesId)) },
+                         color: seriesColor(findSeries(o.seriesId)), tags: o.tags || [] },
       });
     }
     return events;
@@ -255,22 +255,67 @@
     box.appendChild(top);
     if (arg.timeText) box.appendChild(el("div", "ev-time", arg.timeText));
     if (p.description) box.appendChild(el("div", "ev-desc", p.description));
+    const tags = normTags(p.tags);
+    if (tags.length) {
+      // pinned to the bottom of the block; fitBlock shows it only where there is room
+      const tg = el("div", "ev-tags");
+      for (const t of tags) {
+        const chip = el("span", "ev-tag", t);
+        chip.title = t;
+        tg.appendChild(chip);
+      }
+      box.appendChild(tg);
+    }
     box.title = (arg.event.title || "") + (p.description ? "\n\n" + p.description : "");
+    // fit after every render: FullCalendar can redraw the content without a new mount
+    requestAnimationFrame(() => fitBlock(box));
     return { domNodes: [box] };
   }
 
-  /* Fit the description to the height that is left: whole lines only. */
-  function clampDescription(info) {
-    requestAnimationFrame(() => {
-      const box = info.el.querySelector(".ev");
-      const desc = box && box.querySelector(".ev-desc");
-      if (!desc || getComputedStyle(desc).display === "none") return;
-      const avail = box.getBoundingClientRect().bottom - desc.getBoundingClientRect().top - 2;
-      const lines = Math.floor(avail / 16);
-      if (lines < 1) desc.style.display = "none";
-      else desc.style.webkitLineClamp = String(lines);
-    });
+  /* Fit the block to its height. Priority: title, time, description (whole lines only),
+     then tags in whole rows in what is left; tags are the first to go. */
+  const LINE_H = 16;          /* .ev line-height */
+  const TAG_ROW_H = 14;       /* .ev-tag height */
+  const TAG_GAP = 2;          /* .ev-tags gap */
+  function fitBlock(box) {
+    if (!box.isConnected) return;
+    const bottom = box.getBoundingClientRect().bottom - 2;   // minus the bottom padding
+    const desc = box.querySelector(".ev-desc");
+    if (desc) {
+      desc.style.display = "";
+      desc.style.webkitLineClamp = "";
+      if (getComputedStyle(desc).display !== "none") {
+        const lines = Math.floor((bottom - desc.getBoundingClientRect().top) / LINE_H);
+        if (lines < 1) desc.style.display = "none";
+        else desc.style.webkitLineClamp = String(lines);
+      }
+    }
+    const tags = box.querySelector(".ev-tags");
+    if (!tags) return;
+    tags.classList.remove("fits");
+    tags.style.maxHeight = "";
+    let used = -Infinity;
+    for (const c of box.children) {
+      if (c === tags || getComputedStyle(c).display === "none") continue;
+      used = Math.max(used, c.getBoundingClientRect().bottom);
+    }
+    const rows = Math.floor((bottom - used - 3 + TAG_GAP) / (TAG_ROW_H + TAG_GAP));   // 3px above the tags
+    if (rows < 1) return;
+    tags.style.maxHeight = (rows * (TAG_ROW_H + TAG_GAP) - TAG_GAP) + "px";
+    tags.classList.add("fits");
   }
+
+  /* Re-fit whenever a block changes size (window resize, panel resize, expandRows). */
+  const blockObserver = window.ResizeObserver
+    ? new ResizeObserver((entries) => {
+        for (const e of entries) {
+          const box = e.target.querySelector(".ev");
+          if (box) fitBlock(box);
+        }
+      })
+    : null;
+  function onEventMount(info) { if (blockObserver) blockObserver.observe(info.el); }
+  function onEventUnmount(info) { if (blockObserver) blockObserver.unobserve(info.el); }
 
   function eventTimes(ev) {
     const start = toLocal(ev.start);
@@ -341,7 +386,8 @@
       eventDurationEditable: true,
       events: (info, ok) => ok(buildEvents(info.start, info.end)),
       eventContent: renderEvent,
-      eventDidMount: clampDescription,
+      eventDidMount: onEventMount,
+      eventWillUnmount: onEventUnmount,
       eventClick: (info) => { info.jsEvent.preventDefault(); openFromEventProps(info.event.extendedProps); },
       select: (info) => {
         calendar.unselect();
@@ -640,7 +686,8 @@
                          from: f.from, until: f.until });
       setColorField(s, f.color, SERIES_COLOR);
     } else if (ed.mode === "todo") {
-      const t = Object.assign(findTodo(ed.id), { title: f.title, description: f.description, tags: f.tags });
+      // to-dos have no Tags field: tags already in the data are kept as they are
+      const t = Object.assign(findTodo(ed.id), { title: f.title, description: f.description });
       setTopicField(t, $("f-topic").value);
     }
     closeEditor();
@@ -747,11 +794,6 @@
     // the group header already names the topic: only the task is shown
     body.appendChild(el("div", "todo-title", t.title));
     if (t.description) body.appendChild(el("div", "todo-desc", t.description));
-    if (t.tags && t.tags.length) {
-      const tg = el("div");
-      for (const x of t.tags) tg.appendChild(el("span", "tag", x));
-      body.appendChild(tg);
-    }
     body.title = t.title + (t.description ? "\n\n" + t.description : "");
     body.addEventListener("click", () => openEditor({ mode: "todo", id: t.id }));
     li.appendChild(cb);
