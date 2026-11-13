@@ -57,19 +57,23 @@
       <div id="filter-results" class="filter-results"></div>
     </section>
 
+    <div id="todo-resizer" class="todo-resizer" role="separator" aria-orientation="vertical"
+         aria-controls="todo-panel" title="Drag to resize, double-click to reset" hidden></div>
     <aside id="todo-panel" class="todo-panel" hidden>
       <div class="todo-head">
         <h2>To-do</h2>
         <span class="hint">Drag onto the calendar</span>
       </div>
       <form id="todo-add" class="todo-add" autocomplete="off">
-        <input id="todo-title" placeholder="Add a to-do, Enter">
+        <input id="todo-topic" list="topic-list" placeholder="Topic" aria-label="Topic" title="Empty = Generic">
+        <input id="todo-title" placeholder="Task, Enter" aria-label="Task">
       </form>
       <ul id="todo-list" class="todo-list"></ul>
     </aside>
   </main>
 
   <datalist id="tag-list"></datalist>
+  <datalist id="topic-list"></datalist>
 
   <!-- Choice for recurring occurrences -->
   <dialog id="scope-dialog" class="small-dialog">
@@ -90,6 +94,9 @@
         <span id="editor-kind" class="editor-kind"></span>
         <button type="button" class="icon-btn close" data-action="cancel" aria-label="Close">&times;</button>
       </div>
+
+      <label class="field" data-only="todo"><span class="label">Topic</span>
+        <input id="f-topic" list="topic-list" placeholder="Generic"></label>
 
       <label class="field"><span class="label">Title</span>
         <input id="f-title" class="title-input" required></label>

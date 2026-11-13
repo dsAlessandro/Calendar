@@ -89,6 +89,45 @@
     }
     return normTags(all).sort((a, b) => a.localeCompare(b));
   }
+  /* To-do topic: "" means Generic. Stored as no field, never as "Generic". */
+  const GENERIC = "Generic";
+  function normTopic(raw) {
+    const t = String(raw == null ? "" : raw).trim().replace(/\s+/g, " ");
+    return t.toLowerCase() === GENERIC.toLowerCase() ? "" : t;
+  }
+  function topicOf(todo) { return normTopic(todo && todo.topic); }
+  function setTopicField(obj, raw) {
+    const t = normTopic(raw);
+    if (t) obj.topic = t; else delete obj.topic;
+  }
+  /* Suggestions for the Topic inputs: topics already used, plus every tag. */
+  function allTopics() {
+    return normTags(data.todos.map(topicOf).concat(allTags())).filter((t) => normTopic(t))
+      .sort((a, b) => a.localeCompare(b));
+  }
+  /* The activity a to-do becomes when dropped: a non-Generic topic is added as a tag. */
+  function todoToActivity(todo, start) {
+    const topic = topicOf(todo);
+    return {
+      id: uid(), title: todo.title, description: todo.description || "", results: "",
+      tags: normTags((todo.tags || []).concat(topic ? [topic] : [])), status: null,
+      start, end: plusMinutes(start, 60),
+    };
+  }
+  /* Groups for the panel: alphabetical (case-insensitive), Generic last, list order kept inside. */
+  function groupTodos(todos) {
+    const groups = new Map();
+    for (const t of todos) {
+      const topic = topicOf(t);
+      const key = topic.toLowerCase();
+      if (!groups.has(key)) groups.set(key, { topic, items: [] });
+      groups.get(key).items.push(t);
+    }
+    return [...groups.values()].sort((a, b) => {
+      if (!a.topic !== !b.topic) return a.topic ? -1 : 1;
+      return a.topic.localeCompare(b.topic, undefined, { sensitivity: "base" });
+    });
+  }
   function el(tag, cls, text) {
     const e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -126,11 +165,12 @@
     const res = await fetch("/api/data", { cache: "no-store" });
     if (!res.ok) throw new Error("GET /api/data " + res.status);
     const doc = await res.json();
-    data = {
+    // unknown top-level keys are kept, so a save never drops them
+    data = Object.assign({}, doc, {
       activities: Array.isArray(doc.activities) ? doc.activities : [],
       series: Array.isArray(doc.series) ? doc.series : [],
       todos: Array.isArray(doc.todos) ? doc.todos : [],
-    };
+    });
   }
 
   /* Every change goes through here: save the whole document, then redraw. */
@@ -260,11 +300,7 @@
     const todo = findTodo(p.todoId);
     info.event.remove();
     if (!todo) return;
-    const start = toLocal(info.event.start);
-    data.activities.push({
-      id: uid(), title: todo.title, description: todo.description || "", results: "",
-      tags: normTags(todo.tags), status: null, start, end: plusMinutes(start, 60),
-    });
+    data.activities.push(todoToActivity(todo, toLocal(info.event.start)));
     data.todos = data.todos.filter((t) => t.id !== todo.id);
     changed();
   }
@@ -516,6 +552,7 @@
       const t = findTodo(ed.id);
       if (!t) return;
       v = Object.assign(v, t);
+      $("f-topic").value = topicOf(t);
       kind = "To-do";
     }
 
@@ -603,7 +640,8 @@
                          from: f.from, until: f.until });
       setColorField(s, f.color, SERIES_COLOR);
     } else if (ed.mode === "todo") {
-      Object.assign(findTodo(ed.id), { title: f.title, description: f.description, tags: f.tags });
+      const t = Object.assign(findTodo(ed.id), { title: f.title, description: f.description, tags: f.tags });
+      setTopicField(t, $("f-topic").value);
     }
     closeEditor();
     changed();
@@ -630,10 +668,13 @@
   /* The block keeps showing the plan: reschedule only adds a to-do. */
   function rescheduleFromEditor() {
     const f = readForm();
-    data.todos.unshift({
+    const todo = {
       id: uid(), title: f.title || "Untitled", description: f.description,
       tags: f.tags, created: toLocal(new Date()),
-    });
+    };
+    // Generic, unless the activity has exactly one tag: that tag becomes the topic
+    if (f.tags.length === 1) setTopicField(todo, f.tags[0]);
+    data.todos.unshift(todo);
     showTodoPanel(true);
     changed();
     toast("Added to the to-do list");
@@ -691,6 +732,33 @@
 
   /* ------------------------------------------------------------------ to-do */
 
+  function todoItem(t) {
+    const li = el("li", "todo");
+    li.dataset.id = t.id;
+    li.dataset.title = t.title;
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.title = "Done: remove it";
+    cb.addEventListener("change", () => {
+      data.todos = data.todos.filter((x) => x.id !== t.id);
+      changed();
+    });
+    const body = el("div", "todo-body");
+    // the group header already names the topic: only the task is shown
+    body.appendChild(el("div", "todo-title", t.title));
+    if (t.description) body.appendChild(el("div", "todo-desc", t.description));
+    if (t.tags && t.tags.length) {
+      const tg = el("div");
+      for (const x of t.tags) tg.appendChild(el("span", "tag", x));
+      body.appendChild(tg);
+    }
+    body.title = t.title + (t.description ? "\n\n" + t.description : "");
+    body.addEventListener("click", () => openEditor({ mode: "todo", id: t.id }));
+    li.appendChild(cb);
+    li.appendChild(body);
+    return li;
+  }
+
   function renderTodos() {
     const list = $("todo-list");
     list.innerHTML = "";
@@ -698,50 +766,110 @@
       list.appendChild(el("li", "todo-empty", "Nothing to reschedule."));
       return;
     }
-    for (const t of data.todos) {
-      const li = el("li", "todo");
-      li.dataset.id = t.id;
-      li.dataset.title = t.title;
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.title = "Done: remove it";
-      cb.addEventListener("change", () => {
-        data.todos = data.todos.filter((x) => x.id !== t.id);
-        changed();
-      });
-      const body = el("div", "todo-body");
-      body.appendChild(el("div", "todo-title", t.title));
-      if (t.description) body.appendChild(el("div", "todo-desc", t.description));
-      if (t.tags && t.tags.length) {
-        const tg = el("div");
-        for (const x of t.tags) tg.appendChild(el("span", "tag", x));
-        body.appendChild(tg);
-      }
-      body.title = t.title + (t.description ? "\n\n" + t.description : "");
-      body.addEventListener("click", () => openEditor({ mode: "todo", id: t.id }));
-      li.appendChild(cb);
-      li.appendChild(body);
-      list.appendChild(li);
+    for (const g of groupTodos(data.todos)) {
+      list.appendChild(el("li", "todo-group", g.topic || GENERIC));
+      for (const t of g.items) list.appendChild(todoItem(t));
     }
+  }
+
+  /* Panel width: a per-viewer convenience in localStorage, never in the data file. */
+  const PANEL_MIN = 280;        // the default width is also the minimum
+  const CALENDAR_MIN = 480;     // what is left to the calendar view never goes below this
+  const WIDTH_KEY = "organizer.todoWidth";
+  let panelWidth = null;        // null = the default width from style.css
+
+  function clampPanelWidth(w) {
+    const layout = document.querySelector(".layout").getBoundingClientRect().width;
+    const handle = $("todo-resizer").getBoundingClientRect().width;
+    const max = Math.max(PANEL_MIN, layout - handle - CALENDAR_MIN);
+    return Math.round(Math.min(max, Math.max(PANEL_MIN, w)));
+  }
+  function applyPanelWidth() {
+    $("todo-panel").style.width = panelWidth == null ? "" : clampPanelWidth(panelWidth) + "px";
+  }
+
+  function initResizer() {
+    const handle = $("todo-resizer");
+    try {
+      const v = parseInt(localStorage.getItem(WIDTH_KEY), 10);
+      if (v > 0) panelWidth = v;
+    } catch (e) { /* ignore */ }
+    let frame = 0;
+    const relayout = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => { frame = 0; if (calendar) calendar.updateSize(); });
+    };
+    handle.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      try { handle.setPointerCapture(e.pointerId); } catch (err) { /* window listeners below suffice */ }
+      handle.classList.add("active");
+      document.body.classList.add("resizing");
+      // relative to where the drag started, so the edge does not jump under the pointer
+      const startX = e.clientX;
+      const startW = $("todo-panel").getBoundingClientRect().width;
+      let moved = false;
+      const move = (ev) => {
+        moved = true;
+        panelWidth = clampPanelWidth(startW + startX - ev.clientX);
+        applyPanelWidth();
+        relayout();
+      };
+      const end = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", end);
+        window.removeEventListener("pointercancel", end);
+        handle.classList.remove("active");
+        document.body.classList.remove("resizing");
+        if (!moved) return;
+        try { localStorage.setItem(WIDTH_KEY, String(panelWidth)); } catch (err) { /* ignore */ }
+        if (calendar) calendar.updateSize();
+      };
+      // on window, not only the handle: the pointer leaves it as soon as the drag starts
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", end);
+      window.addEventListener("pointercancel", end);
+    });
+    handle.addEventListener("dblclick", () => {
+      panelWidth = null;
+      try { localStorage.removeItem(WIDTH_KEY); } catch (e) { /* ignore */ }
+      applyPanelWidth();
+      if (calendar) calendar.updateSize();
+    });
+    window.addEventListener("resize", applyPanelWidth);
   }
 
   function showTodoPanel(show) {
     $("todo-panel").hidden = !show;
+    $("todo-resizer").hidden = !show;
     $("toggle-todos").classList.toggle("on", show);
     try { localStorage.setItem("organizer.todos", show ? "1" : "0"); } catch (e) { /* ignore */ }
+    if (show) applyPanelWidth();
     if (calendar) setTimeout(() => calendar.updateSize(), 0);
   }
 
+  /* Quick add: the Task clears, the Topic stays, so several tasks go in one after another. */
+  function addTodoFromPanel() {
+    const title = $("todo-title").value.trim();
+    if (!title) return;
+    const todo = { id: uid(), title, description: "", tags: [], created: toLocal(new Date()) };
+    setTopicField(todo, $("todo-topic").value);
+    data.todos.unshift(todo);
+    $("todo-title").value = "";
+    changed();
+  }
+
   function initTodos() {
-    $("todo-add").addEventListener("submit", (e) => {
-      e.preventDefault();
-      const title = $("todo-title").value.trim();
-      if (!title) return;
-      data.todos.unshift({ id: uid(), title, description: "", tags: [], created: toLocal(new Date()) });
-      $("todo-title").value = "";
-      changed();
+    $("todo-add").addEventListener("submit", (e) => { e.preventDefault(); addTodoFromPanel(); });
+    // two text inputs and no submit button: Enter does not submit the form by itself
+    $("todo-title").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); addTodoFromPanel(); }
+    });
+    $("todo-topic").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.isComposing) $("todo-title").focus();
     });
     $("toggle-todos").addEventListener("click", () => showTodoPanel($("todo-panel").hidden));
+    initResizer();
     let open = false;
     try { open = localStorage.getItem("organizer.todos") === "1"; } catch (e) { /* ignore */ }
     showTodoPanel(open);
@@ -852,6 +980,9 @@
     const dl = $("tag-list");
     dl.innerHTML = "";
     for (const t of allTags()) dl.appendChild(new Option(t, t));
+    const tl = $("topic-list");
+    tl.innerHTML = "";
+    for (const t of allTopics()) tl.appendChild(new Option(t, t));
   }
 
   function refreshAll() {

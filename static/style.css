@@ -234,18 +234,44 @@ textarea { resize: vertical; width: 100%; }
 .fc-timegrid-event-short .ev-time, .fc-timegrid-event-short .ev-desc { display: none; }
 .fc-event-mirror .ev { opacity: .85; }
 
-/* To-do panel */
+/* To-do panel. Its left border is the resize handle: drag to resize, double-click to reset. */
+.todo-resizer {
+  flex: none;
+  width: 7px;
+  margin-right: -3px;           /* the 1px line sits where the panel border was */
+  position: relative;
+  z-index: 2;
+  cursor: col-resize;
+  touch-action: none;
+  background: linear-gradient(var(--line), var(--line)) no-repeat 3px 0 / 1px 100%;
+  transition: background-color .12s;
+}
+.todo-resizer:hover { background-color: var(--accent-soft); background-image: linear-gradient(var(--accent), var(--accent)); }
+.todo-resizer.active { background-color: var(--accent-soft); background-image: linear-gradient(var(--accent), var(--accent)); background-size: 2px 100%; }
+body.resizing { cursor: col-resize; user-select: none; }
+body.resizing .layout { pointer-events: none; }
+body.resizing .todo-resizer { pointer-events: auto; }
 .todo-panel {
   width: 280px;
   flex: none;
-  border-left: 1px solid var(--line);
   padding: 12px 14px;
   overflow: auto;
   background: var(--surface);
 }
 .todo-head { display: flex; align-items: baseline; justify-content: space-between; }
 .todo-head h2 { font-size: 15px; margin: 0 0 8px; }
-.todo-add input { width: 100%; }
+.todo-add { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 6px; }
+.todo-add input { width: 100%; min-width: 0; }
+.todo-group {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  margin: 12px 2px 5px;
+  overflow-wrap: anywhere;
+}
+.todo-group:first-child { margin-top: 0; }
 .todo-list { list-style: none; margin: 10px 0 0; padding: 0; }
 .todo {
   display: flex;
@@ -261,7 +287,7 @@ textarea { resize: vertical; width: 100%; }
 }
 .todo input[type=checkbox] { margin-top: 3px; cursor: pointer; }
 .todo-body { min-width: 0; flex: 1; cursor: pointer; }
-.todo-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+.todo-title { white-space: normal; overflow-wrap: anywhere; font-weight: 500; }   /* wraps: widen the panel to read it in full */
 .todo-desc { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .todo-empty { color: var(--muted); font-size: 13px; padding: 6px 2px; }
 
@@ -309,6 +335,7 @@ dialog::backdrop { background: rgba(15, 20, 30, 0.28); }
 .close { font-size: 20px; line-height: 1; padding: 2px 8px; }
 .editor .field { display: block; margin: 10px 0; }
 .editor .title-input { width: 100%; font-size: 16px; font-weight: 600; }
+.editor #f-topic { width: 100%; }
 .time-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
 .time-row label { display: block; }
 .status-buttons { display: flex; gap: 6px; flex-wrap: wrap; }

@@ -9,7 +9,9 @@ No account, no cloud, no third-party packages.
 - Blocks with Title / Description / Results / Tags, a colour status and an optional colour.
 - Weekly recurring activities, editable per occurrence (move, change, cancel one date) or
   as a whole series.
-- A to-do panel whose items can be dragged onto the grid.
+- A to-do panel whose items (Topic / Task) can be dragged onto the grid, grouped by topic.
+  Its left edge is a handle: drag it to widen the panel, double-click it to reset the width
+  (remembered per browser in `localStorage`, not in the data file).
 - A Filter view by tag over a window around today.
 - Every change is saved at once; a power button in the top bar stops the server.
 
@@ -58,6 +60,11 @@ Setup on a new machine: see [`SETUP.md`](SETUP.md).
   activities (no colour: the block takes the status colour), `lilac` for series. The
   default is saved as no field. A series colour applies to all its occurrences. Coloured
   blocks keep their colour and show the status as a small square in the top-right corner.
+- To-dos have an optional `topic` (string); `title` is the task. Empty or missing means
+  **Generic** and is saved as no field, so older data needs no migration. Dropping a to-do
+  on the grid adds a non-Generic topic to the new activity's tags (no duplicates);
+  Reschedule uses the activity's tag as topic when it has exactly one, else Generic.
+- Fields the UI does not know about are kept on save.
 
 ## Platform notes
 
