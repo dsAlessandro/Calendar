@@ -250,6 +250,7 @@ textarea { resize: vertical; width: 100%; }
   overflow: hidden;
 }
 .ev-tags.fits { display: flex; }
+.ev-tags.inline { justify-content: flex-end; }   /* on the time line; extra tags wrap out of sight */
 .fc-timegrid-event-short .ev-tags { display: none !important; }
 .ev-tag {
   flex: none;

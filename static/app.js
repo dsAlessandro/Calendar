@@ -296,17 +296,35 @@
     }
     const tags = box.querySelector(".ev-tags");
     if (!tags) return;
-    tags.classList.remove("fits");
-    tags.style.maxHeight = "";
+    tags.classList.remove("fits", "inline");
+    tags.style.maxHeight = tags.style.top = tags.style.left = tags.style.bottom = "";
     let used = -Infinity;
     for (const c of box.children) {
       if (c === tags || getComputedStyle(c).display === "none") continue;
       used = Math.max(used, c.getBoundingClientRect().bottom);
     }
     const rows = Math.floor((bottom - used - 3 + TAG_GAP) / (TAG_ROW_H + TAG_GAP));   // 3px above the tags
-    if (rows < 1) return;
+    if (rows < 1) { fitTagsInline(box, tags); return; }
     tags.style.maxHeight = (rows * (TAG_ROW_H + TAG_GAP) - TAG_GAP) + "px";
     tags.classList.add("fits");
+  }
+
+  /* No room for a tag row at the bottom: put the tags on the time line, right of the time. */
+  function fitTagsInline(box, tags) {
+    const time = box.querySelector(".ev-time");
+    if (!time || getComputedStyle(time).display === "none") return;
+    const br = box.getBoundingClientRect();
+    const tr = time.getBoundingClientRect();
+    if (tr.bottom > br.bottom) return;
+    const range = document.createRange();
+    range.selectNodeContents(time);
+    const left = tr.left - br.left + range.getBoundingClientRect().width + 6;
+    if (br.width - left - 6 < 24) return;
+    tags.style.top = (tr.top - br.top + 1) + "px";
+    tags.style.left = left + "px";
+    tags.style.bottom = "auto";
+    tags.style.maxHeight = TAG_ROW_H + "px";
+    tags.classList.add("fits", "inline");
   }
 
   /* Re-fit whenever a block changes size (window resize, panel resize, expandRows). */
