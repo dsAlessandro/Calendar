@@ -382,6 +382,77 @@
     }
   }
 
+  /* ------------------------------------------------------------ copy/paste */
+
+  /* Paste mode: a copied single activity is placed by clicking free slots, as many times
+     as wanted, until Esc or the x in the bar. null = not in paste mode. */
+  const NO_OVERWRITE = "You can't overwrite an activity: delete it first.";
+  const PASTE_SLOT = 30;    // minutes, as slotDuration: a paste starts where its slot starts
+  let clip = null;
+
+  function minutesBetween(a, b) {
+    const t = (s) => {
+      const [date, time] = s.split("T");
+      const [y, m, d] = date.split("-").map(Number);
+      const [hh, mm] = time.split(":").map(Number);
+      return new Date(y, m - 1, d, hh, mm).getTime();
+    };
+    return Math.round((t(b) - t(a)) / 60000);
+  }
+
+  function startPaste(a) {
+    clip = { title: a.title, description: a.description || "", tags: normTags(a.tags),
+             color: activityColor(a), minutes: minutesBetween(a.start, a.end) };
+    $("paste-title").textContent = "«" + (a.title || "Untitled") + "»";
+    $("paste-bar").hidden = false;
+    document.body.classList.add("pasting");
+    // no new activity by selecting, no moving blocks by accident while pasting
+    calendar.setOption("selectable", false);
+    calendar.setOption("editable", false);
+  }
+
+  function stopPaste() {
+    if (!clip) return;
+    clip = null;
+    $("paste-bar").hidden = true;
+    document.body.classList.remove("pasting");
+    calendar.setOption("selectable", true);
+    calendar.setOption("editable", true);
+  }
+
+  /* Does [start, end) overlap any block: single activities and series occurrences. */
+  function overlapsBlock(start, end) {
+    if (data.activities.some((a) => a.start < end && a.end > start)) return true;
+    const lo = R.addDays(start.slice(0, 10), -1);
+    const hi = R.addDays(end.slice(0, 10), 1);
+    return R.expandAll(data.series, lo, hi).some((o) => o.start < end && o.end > start);
+  }
+
+  function pasteAt(date) {
+    if (!clip) return;
+    const d = new Date(date.getTime());
+    d.setMinutes(d.getMinutes() - (d.getMinutes() % PASTE_SLOT), 0, 0);
+    const start = toLocal(d);
+    const end = plusMinutes(start, clip.minutes);
+    if (overlapsBlock(start, end)) return toast(NO_OVERWRITE);
+    const a = { id: uid(), title: clip.title, description: clip.description, results: "",
+                tags: clip.tags.slice(), status: null, start, end };
+    setColorField(a, clip.color || ACTIVITY_COLOR, ACTIVITY_COLOR);
+    data.activities.push(a);
+    changed();
+  }
+
+  function initPaste() {
+    $("paste-cancel").addEventListener("click", stopPaste);
+    document.addEventListener("keydown", (e) => {
+      // a dialog open on top handles its own Esc
+      if (e.key === "Escape" && clip && !document.querySelector("dialog[open]")) {
+        e.preventDefault();
+        stopPaste();
+      }
+    });
+  }
+
   function initCalendar() {
     const hourFmt = { hour: "2-digit", minute: "2-digit", hour12: false };
     const now = new Date();
@@ -410,9 +481,15 @@
       eventContent: renderEvent,
       eventDidMount: onEventMount,
       eventWillUnmount: onEventUnmount,
-      eventClick: (info) => { info.jsEvent.preventDefault(); openFromEventProps(info.event.extendedProps); },
+      eventClick: (info) => {
+        info.jsEvent.preventDefault();
+        if (clip) return toast(NO_OVERWRITE);     // a block is occupied by definition
+        openFromEventProps(info.event.extendedProps);
+      },
+      dateClick: (info) => { if (clip) pasteAt(info.date); },
       select: (info) => {
         calendar.unselect();
+        if (clip) return;
         openEditor({ mode: "activity", isNew: true, start: toLocal(info.start), end: toLocal(info.end) });
       },
       eventDrop: onMoveOrResize,
@@ -576,6 +653,14 @@
     if (ed.mode === "activity" && !$("f-repeat").checked) $("repeat-box").hidden = true;
     $("btn-delete").hidden = !!ed.isNew;
     $("btn-reschedule").hidden = ed.mode === "todo" || ed.mode === "series";
+    $("btn-copy").hidden = ed.mode !== "activity" || !!ed.isNew;
+  }
+
+  /* Copy takes the saved activity: edits not saved in the open editor are dropped. */
+  function copyFromEditor() {
+    const a = ed && ed.mode === "activity" && !ed.isNew ? findActivity(ed.id) : null;
+    closeEditor();
+    if (a) startPaste(a);
   }
 
   function openEditor(target) {
@@ -795,6 +880,7 @@
       if (a === "cancel") closeEditor();
       else if (a === "delete") deleteFromEditor();
       else if (a === "reschedule") rescheduleFromEditor();
+      else if (a === "copy") copyFromEditor();
     });
     editor.addEventListener("close", () => { ed = null; });
   }
@@ -1033,6 +1119,7 @@
   /* ------------------------------------------------------------ view, power */
 
   function setView(name) {
+    if (name !== "calendar") stopPaste();
     document.querySelectorAll(".view-btn").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
     $("view-calendar").hidden = name !== "calendar";
     $("view-filter").hidden = name !== "filter";
@@ -1084,6 +1171,7 @@
     initTodos();
     initFilter();
     initCalendar();
+    initPaste();
     document.querySelectorAll(".view-btn").forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
     $("power").addEventListener("click", powerOff);
     $("save-state").addEventListener("click", () => { if (dirty && !saving) flush(); });

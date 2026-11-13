@@ -14,6 +14,10 @@
       <button type="button" class="view-btn active" data-view="calendar">Calendar</button>
       <button type="button" class="view-btn" data-view="filter">Filter</button>
     </nav>
+    <div id="paste-bar" class="paste-bar" role="status" hidden>
+      <span>Click a free slot to paste <b id="paste-title"></b> · Esc to cancel</span>
+      <button type="button" id="paste-cancel" class="icon-btn" title="Stop pasting" aria-label="Stop pasting">&times;</button>
+    </div>
     <div class="topbar-right">
       <span id="save-state" class="save-state" aria-live="polite"></span>
       <button type="button" id="toggle-todos" class="ghost" title="Show or hide the to-do panel">To-do</button>
@@ -141,6 +145,7 @@
       <div class="editor-actions">
         <button type="button" class="danger ghost" data-action="delete" id="btn-delete">Delete</button>
         <button type="button" class="ghost" data-action="reschedule" id="btn-reschedule" title="Copy title and description to a new to-do">Reschedule</button>
+        <button type="button" class="ghost" data-action="copy" id="btn-copy" title="Copy this activity, then click free slots to paste it">Copy</button>
         <span class="spacer"></span>
         <button type="button" class="ghost" data-action="cancel">Cancel</button>
         <button type="submit" class="primary" data-action="save">Save</button>

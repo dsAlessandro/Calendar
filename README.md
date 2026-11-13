@@ -12,6 +12,10 @@ No account, no cloud, no third-party packages.
 - A to-do panel whose items (Topic / Task) can be dragged onto the grid, grouped by topic.
   Its left edge is a handle: drag it to widen the panel, double-click it to reset the width
   (remembered per browser in `localStorage`, not in the data file).
+- Copy and paste of single activities: **Copy** in the editor (not for recurring ones)
+  enters paste mode; each click on a free slot pastes a copy there (same title, description,
+  tags, colour and duration; empty results, not rated). It stays on across weeks until Esc,
+  the x in the bar, or the Filter view. A paste that would overlap a block is refused.
 - A Filter view by tag over a window around today.
 - Every change is saved at once; a power button in the top bar stops the server.
 
