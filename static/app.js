@@ -272,8 +272,8 @@
     return { domNodes: [box] };
   }
 
-  /* Fit the block to its height. Priority: title, time, description (whole lines only),
-     then tags in whole rows in what is left; tags are the first to go. */
+  /* Fit the block to its height. Priority: title, time, one row of tags, description
+     (whole lines only), then more tag rows in what is left. */
   const LINE_H = 16;          /* .ev line-height */
   const TAG_ROW_H = 14;       /* .ev-tag height */
   const TAG_GAP = 2;          /* .ev-tags gap */
@@ -281,11 +281,15 @@
     if (!box.isConnected) return;
     const bottom = box.getBoundingClientRect().bottom - 2;   // minus the bottom padding
     const desc = box.querySelector(".ev-desc");
+    const hasTags = !!box.querySelector(".ev-tags");
     if (desc) {
       desc.style.display = "";
       desc.style.webkitLineClamp = "";
       if (getComputedStyle(desc).display !== "none") {
-        const lines = Math.floor((bottom - desc.getBoundingClientRect().top) / LINE_H);
+        const top = desc.getBoundingClientRect().top;
+        // keep one tag row free below the description, when one fits at all
+        const reserve = hasTags && bottom - top >= TAG_ROW_H + 3 ? TAG_ROW_H + 3 : 0;
+        const lines = Math.floor((bottom - reserve - top) / LINE_H);
         if (lines < 1) desc.style.display = "none";
         else desc.style.webkitLineClamp = String(lines);
       }
