@@ -8,7 +8,10 @@
   const STATUSES = ["green", "yellow", "red"];
   // Palette keys (stored in the data); the colours themselves are CSS tokens --c-<key>.
   const COLORS = [["grey", "Grey"], ["cyan", "Cyan"], ["blue", "Blue"], ["indigo", "Indigo"],
-                  ["lilac", "Lilac"], ["purple", "Purple"], ["magenta", "Magenta"]];
+                  ["lilac", "Lilac"], ["purple", "Purple"], ["magenta", "Magenta"],
+                  ["green", "Green"], ["yellow", "Yellow"], ["red", "Red"]];
+  // Block colours that look like a status: when not rated they show a hollow square.
+  const STATUS_LIKE_COLORS = ["green", "yellow", "red"];
   const ACTIVITY_COLOR = "grey";   // default: no colour, the block takes the status colour
   const SERIES_COLOR = "lilac";
 
@@ -47,8 +50,13 @@
   function setColorField(obj, c, def) {
     if (c === def) delete obj.color; else obj.color = c;
   }
-  function statusSquare(s) {
-    if (!STATUSES.includes(s)) return null;
+  function statusSquare(s, color) {
+    if (!STATUSES.includes(s)) {
+      if (!STATUS_LIKE_COLORS.includes(color)) return null;
+      const empty = el("span", "ev-sq sq-empty");
+      empty.title = "Not rated";
+      return empty;
+    }
     const sq = el("span", "ev-sq sq-" + s);
     sq.title = { green: "100%", yellow: "50-99%", red: "< 50%" }[s];
     return sq;
@@ -202,7 +210,7 @@
       icon.title = "Recurring";
       top.appendChild(icon);
     }
-    const sq = p.color ? statusSquare(p.status) : null;
+    const sq = p.color ? statusSquare(p.status, p.color) : null;
     if (sq) top.appendChild(sq);
     box.appendChild(top);
     if (arg.timeText) box.appendChild(el("div", "ev-time", arg.timeText));
@@ -795,7 +803,7 @@
       const when = el("div", "fr-when");
       when.appendChild(el("b", "", fmtDay(it.start.slice(0, 10))));
       when.appendChild(document.createTextNode(fmtRange(it.start, it.end) + (it.kind === "occurrence" ? "  ↻" : "")));
-      const sq = it.color ? statusSquare(it.status) : null;
+      const sq = it.color ? statusSquare(it.status, it.color) : null;
       if (sq) when.appendChild(sq);
       const main = el("div", "fr-main");
       if (show.title) main.appendChild(el("div", "fr-title", it.title || "Untitled"));
